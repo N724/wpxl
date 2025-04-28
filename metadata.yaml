@@ -1,9 +1,11 @@
-name: astrbot_plugin_wpxl
-desc: 微胖系列视频插件
-help: 发送「/微胖」获取随机视频
-version: 1.0.0
+name: astrbot_plugin_xiaocan
+desc: 小蚕抽奖任务自动化插件
 author: your_name
-repo: https://github.com/your_repo
+version: 1.0.0
+help: 发送/小蚕抽奖执行任务链
+dependencies:
+  - aiohttp>=3.8.0
 config:
-  rate_limit: 100/day
-  timeout: 30s
+  required_env:
+    - XIAOCAN_COOKIE
+  rate_limit: 3/hour
