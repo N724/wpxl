@@ -1,65 +1,68 @@
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.star import Context, Star, register
 import httpx
-from astrbot import EventBus, BotPlugin, MessageEvent
+import aiofiles
+import time
 from pathlib import Path
+import random
 
-# 常量定义
-API_URL = "https://api.317ak.com/API/sp/wpxl.php"
-TEMP_DIR = Path("./temp/wpxl")
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-
-class WpxlPlugin(BotPlugin):
-    def __init__(self):
-        super().__init__()
+@register("wpxl", "AstrBot", "微胖系列视频", "1.0.0")
+class WpxlVideoPlugin(Star):
+    def __init__(self, context: Context):
+        super().__init__(context)
+        self.api_url = "https://api.317ak.com/API/sp/wpxl.php"
+        self.cache_dir = Path("./data/wpxl_videos")
+        self.cache_dir.mkdir(exist_ok=True)
         self.client = httpx.AsyncClient(timeout=30.0)
 
-    async def _download_video(self) -> Path:
-        """下载视频到本地临时文件"""
+    async def _fetch_video(self) -> Path:
+        """获取并缓存视频"""
         try:
-            resp = await self.client.get(API_URL, follow_redirects=True)
+            resp = await self.client.get(self.api_url)
             resp.raise_for_status()
-
-            if resp.headers['content-type'] != 'video/mp4':
-                self.logger.error(f"非视频返回类型: {resp.headers}")
-                raise ValueError("Invalid content type")
-
-            file_path = TEMP_DIR / f"wpxl_{int(time.time())}.mp4"
-            async with aiofiles.open(file_path, 'wb') as f:
+            
+            if 'video/mp4' not in resp.headers.get('content-type', ''):
+                raise ValueError("API返回非视频内容")
+            
+            filename = f"wpxl_{int(time.time())}_{random.randint(1000,9999)}.mp4"
+            save_path = self.cache_dir / filename
+            async with aiofiles.open(save_path, 'wb') as f:
                 await f.write(resp.content)
-            return file_path
+            return save_path
 
         except httpx.HTTPStatusError as e:
             error_map = {
                 400: "请求参数错误",
-                403: "服务器拒绝访问",
-                405: "请求方法不被允许",
-                408: "请求超时",
-                500: "服务器内部错误",
-                503: "系统维护中"
+                403: "访问被拒绝",
+                500: "服务器内部错误"
             }
-            error_msg = error_map.get(e.response.status_code, f"HTTP错误: {e.response.status_code}")
-            self.logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(error_map.get(e.response.status_code, "视频获取失败"))
 
-    @EventBus.on_command("#微胖", "#wpxl")
-    async def handle_command(self, event: MessageEvent):
+    @filter.command("微胖", alias=['wpxl'])
+    async def send_video(self, event: AstrMessageEvent):
+        """发送随机视频"""
         try:
-            # Step 1: 下载视频
-            await event.reply("正在获取视频，请稍候...")
-            video_path = await self._download_video()
-
-            # Step 2: 发送视频（不同平台适配）
-            if event.platform == "qq":
-                await event.reply(file=video_path, type="video")
-            elif event.platform == "telegram":
-                await event.reply_video(video_path)
+            yield event.plain_result("🔄 正在获取微胖系列视频...")
+            video_path = await self._fetch_video()
+            
+            if event.platform in ("qq", "telegram"):
+                yield event.video_result(str(video_path))
             else:
-                await event.reply(f"视频已生成：[点击下载]({API_URL})")
+                yield event.plain_result(f"🎬 视频已保存: {video_path.name}")
 
         except Exception as e:
-            await event.reply(f"获取失败: {str(e)}")
-            self.logger.exception("视频获取异常")
+            self.logger.error(f"视频获取失败: {str(e)}")
+            yield event.plain_result(f"❌ 获取失败: {str(e)}")
+
+    @filter.command(["微胖开", "微胖关"])
+    async def toggle_plugin(self, event: AstrMessageEvent):
+        """插件开关控制"""
+        group_id = str(event.message_obj.group_id)
+        enabled = event.command == "微胖开"
+        
+        await self.set_group_enabled(group_id, enabled)
+        yield event.plain_result(f"已{'启用' if enabled else '禁用'}微胖系列功能")
 
     def unload(self):
-        # 插件卸载时清理资源
-        self.client.close()
-        super().unload()
+        """清理资源"""
+        self.client.aclose()
