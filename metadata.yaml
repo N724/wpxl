@@ -1,0 +1,17 @@
+name: wpxl
+desc: 微胖系列随机视频
+help: |
+  命令列表：
+  - #微胖 : 获取随机视频
+  - #wpxl : 同上（英文命令）
+  - #微胖开 : 启用本群功能
+  - #微胖关 : 禁用本群功能
+version: v1.0.0
+author: hello七七
+repo: https://github.com/N724/wpxl
+deps:
+  - httpx>=0.25.0
+  - aiofiles>=23.2.1
+permissions:
+  - net
+  - file.write
