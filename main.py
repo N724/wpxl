@@ -1,68 +1,120 @@
+# -*- coding: utf-8 -*-
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
-import httpx
-import aiofiles
-import time
-from pathlib import Path
-import random
+from astrbot.api.message_components import Plain, Video
+import logging
+import aiohttp
+import os
+import uuid # For generating unique temporary filenames
 
-@register("wpxl", "AstrBot", "微胖系列视频", "1.0.0")
-class WpxlVideoPlugin(Star):
-    def __init__(self, context: Context):
+logger = logging.getLogger(__name__)
+
+@register(
+    name="fatty_video",          # Unique plugin identifier
+    trigger="微胖系列",           # User-facing trigger command
+    desc="随机微胖系列视频",     # Short description
+    version="1.0.0",            # Initial version
+    author="Your Name Here"     # Change to your name/ID
+)
+class FattyVideoPlugin(Star):
+    def __init__(self, context: Context, config: dict):
         super().__init__(context)
+        self.config = config  # Plugin configuration
+        # Define the API URL
         self.api_url = "https://api.317ak.com/API/sp/wpxl.php"
-        self.cache_dir = Path("./data/wpxl_videos")
-        self.cache_dir.mkdir(exist_ok=True)
-        self.client = httpx.AsyncClient(timeout=30.0)
+        # Ensure a temporary directory exists (optional, adjust path as needed)
+        self.temp_dir = os.path.join(os.path.dirname(__file__), "temp_videos")
+        if not os.path.exists(self.temp_dir):
+            try:
+                os.makedirs(self.temp_dir)
+            except OSError as e:
+                logger.error(f"无法创建临时目录 {self.temp_dir}: {e}")
+                # Fallback to current directory if creation fails
+                self.temp_dir = "."
 
-    async def _fetch_video(self) -> Path:
-        """获取并缓存视频"""
-        try:
-            resp = await self.client.get(self.api_url)
-            resp.raise_for_status()
-            
-            if 'video/mp4' not in resp.headers.get('content-type', ''):
-                raise ValueError("API返回非视频内容")
-            
-            filename = f"wpxl_{int(time.time())}_{random.randint(1000,9999)}.mp4"
-            save_path = self.cache_dir / filename
-            async with aiofiles.open(save_path, 'wb') as f:
-                await f.write(resp.content)
-            return save_path
+    @filter.command("微胖系列")
+    async def get_fatty_video(self, event: AstrMessageEvent):
+        # Check if the feature is enabled in the config
+        if not self.config.get("enable_fatty_video", True):
+            yield event.plain_result("微胖系列视频功能已被管理员关闭。")
+            return
 
-        except httpx.HTTPStatusError as e:
-            error_map = {
-                400: "请求参数错误",
-                403: "访问被拒绝",
-                500: "服务器内部错误"
-            }
-            raise RuntimeError(error_map.get(e.response.status_code, "视频获取失败"))
-
-    @filter.command("微胖", alias=['wpxl'])
-    async def send_video(self, event: AstrMessageEvent):
-        """发送随机视频"""
-        try:
-            yield event.plain_result("🔄 正在获取微胖系列视频...")
-            video_path = await self._fetch_video()
-            
-            if event.platform in ("qq", "telegram"):
-                yield event.video_result(str(video_path))
-            else:
-                yield event.plain_result(f"🎬 视频已保存: {video_path.name}")
-
-        except Exception as e:
-            self.logger.error(f"视频获取失败: {str(e)}")
-            yield event.plain_result(f"❌ 获取失败: {str(e)}")
-
-    @filter.command(["微胖开", "微胖关"])
-    async def toggle_plugin(self, event: AstrMessageEvent):
-        """插件开关控制"""
-        group_id = str(event.message_obj.group_id)
-        enabled = event.command == "微胖开"
+        temp_video_path = os.path.join(self.temp_dir, f"temp_video_{uuid.uuid4()}.mp4")
         
-        await self.set_group_enabled(group_id, enabled)
-        yield event.plain_result(f"已{'启用' if enabled else '禁用'}微胖系列功能")
+        try:
+            logger.info(f"收到微胖系列视频请求，来自用户：{event.get_sender_id()}")
+            async with aiohttp.ClientSession() as session:
+                # Add a reasonable timeout (e.g., 30 seconds)
+                async with session.get(self.api_url, timeout=30) as response:
+                    # Check if the request was successful (HTTP 200 OK)
+                    if response.status == 200:
+                        # Check Content-Type if needed, though direct MP4 is expected
+                        # content_type = response.headers.get("Content-Type", "")
+                        # logger.debug(f"API Content-Type: {content_type}")
 
-    def unload(self):
-        """清理资源"""
-        self.client.aclose()
+                        # Read the video data directly
+                        video_data = await response.read()
+
+                        if not video_data:
+                             logger.warning("API 返回了空的视频数据。")
+                             yield event.plain_result("😥 抱歉，未能获取到视频内容。")
+                             return
+
+                        # Save the video data to a temporary file asynchronously
+                        # Using standard open for simplicity here, consider aiofiles for full async
+                        try:
+                            with open(temp_video_path, 'wb') as f:
+                                f.write(video_data)
+                            logger.info(f"视频已下载到临时文件：{temp_video_path}")
+                        except IOError as e:
+                            logger.error(f"无法写入临时视频文件 {temp_video_path}: {e}")
+                            yield event.plain_result("😥 存储视频文件时出错，请稍后再试。")
+                            return
+
+                        # Send the video file
+                        yield event.make_result().file_video(temp_video_path)
+                        logger.info(f"已发送视频文件：{temp_video_path}")
+
+                    else:
+                        # Handle API errors based on status code
+                        error_message = f"API 请求失败，状态码：{response.status}"
+                        logger.error(error_message + f" URL: {self.api_url}")
+                        # Provide user-friendly error message based on common codes
+                        if response.status == 403:
+                            yield event.plain_result("😥 请求被服务器拒绝，可能需要检查权限或 API 状态。")
+                        elif response.status == 500 or response.status == 503:
+                            yield event.plain_result("😥 服务器暂时遇到问题，请稍后再试。")
+                        else:
+                            yield event.plain_result(f"😥 获取视频时遇到错误 ({response.status})。")
+
+        except aiohttp.ClientError as e:
+            logger.error(f"请求微胖系列视频 API 时发生网络错误: {e}")
+            yield event.plain_result("😥 网络连接失败，请检查网络或稍后再试。")
+        except asyncio.TimeoutError:
+             logger.error(f"请求微胖系列视频 API 超时: {self.api_url}")
+             yield event.plain_result("😥 请求视频超时，请稍后再试。")
+        except Exception as e:
+            logger.exception(f"处理“微胖系列”命令时发生未知错误: {e}") # Use exception for stack trace
+            yield event.plain_result("😥 处理请求时发生内部错误，请联系管理员。")
+        finally:
+            # Clean up the temporary file regardless of success or failure
+            if os.path.exists(temp_video_path):
+                try:
+                    os.remove(temp_video_path)
+                    logger.info(f"已删除临时视频文件：{temp_video_path}")
+                except OSError as e:
+                    logger.error(f"无法删除临时视频文件 {temp_video_path}: {e}")
+
+    async def terminate(self):
+        # Cleanup if needed when plugin stops
+        pass
+
+# You can add a help class like in the template if desired
+# class FattyVideoHelp(Star):
+#     def __init__(self, context: Context, config: dict):
+#         super().__init__(context)
+#         self.config = config
+#
+#     @filter.command("fatty_video帮助") # Or map to a general help command
+#     async def help_message(self, event: AstrMessageEvent):
+#         yield event.plain_result("发送“微胖系列”获取一个随机的相关视频。")
