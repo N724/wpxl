@@ -1,17 +1,13 @@
-name: wpxl
-desc: 微胖系列随机视频
-help: |
-  命令列表：
-  - #微胖 : 获取随机视频
-  - #wpxl : 同上（英文命令）
-  - #微胖开 : 启用本群功能
-  - #微胖关 : 禁用本群功能
-version: v1.0.0
-author: hello七七
-repo: https://github.com/N724/wpxl
-deps:
-  - httpx>=0.25.0
-  - aiofiles>=23.2.1
-permissions:
-  - net
-  - file.write
+name: fatty_video       # Unique plugin identifier (matches @register)
+desc: 随机微胖系列视频 # Short description
+help: 发送“微胖系列”获取随机视频 # Help message displayed in AstrBot
+version: v1.0.0         # Plugin version
+author: Your Name Here  # Your identifier
+repo: https://github.com/your/repo # Optional: Link to your plugin repository
+
+# Default configuration for the control panel
+config:
+  enable_fatty_video:
+    type: bool          # Data type
+    default: true       # Default value
+    description: 是否启用“微胖系列”视频功能 # Description shown in control panel
